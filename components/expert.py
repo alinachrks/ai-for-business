@@ -16,6 +16,24 @@ import json
 
 def app():
 # Set global variables
+    page_element = """
+    <style>
+    [data-testid="stAppViewContainer"]{
+        background-image: url("https://i.ibb.co.com/3yVykRQ/Minimal-Photography-1-fotor-20240315111216.png");
+        background-size: cover;
+    }
+    [data-testid="stHeader"]{
+        background-color: rgba(0,0,0,0);
+    }
+    [data-testid="stToolbar"]{
+        right: 2rem;
+        background-image: url("https://cdn.iconscout.com/icon/free/png-256/hamburger-menu-462145.png");
+        background-size: cover;
+    }
+    </style>
+    """
+    st.markdown(page_element, unsafe_allow_html=True)
+
 
     ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -100,10 +118,6 @@ def app():
     async def main(human_prompt: str, selected_character: str = "Default") -> dict:
         res = {'status': 0, 'message': "Success"}
         try:
-
-            # Strip the prompt of any potentially harmful html/js injections
-            human_prompt = human_prompt.replace("<", "&lt;").replace(">", "&gt;")
-
             # Update both chat log and the model memory
             st.session_state.LOG.append(f"Human: {human_prompt}")
             st.session_state.MEMORY.append({'role': "user", 'content': human_prompt})
@@ -120,118 +134,17 @@ def app():
                 reply_box = st.empty()
                 reply_box.markdown(get_chat_message(), unsafe_allow_html=True)
 
-                # This is one of those small three-dot animations to indicate the bot is "writing"
-                writing_animation = st.empty()
-                file_path = os.path.join(ROOT_DIR, "src", "assets", "loading.gif")
-                writing_animation.markdown(f"&nbsp;&nbsp;&nbsp;&nbsp;<img src='data:image/gif;base64,{get_local_img(file_path)}' width=128 height=64>", unsafe_allow_html=True)
+                # Step 1: Generate the AI-aided response using ChatGPT API
+                response = await get_chatbot_reply_async(st.session_state.MEMORY)
 
-                # Step 1: Generate the AI-aided image prompt using ChatGPT API
-                # (but we first need to generate the prompt for ChatGPT!)
-                prompt_res = await generate_prompt_from_memory_async(
-                    TOKENIZER,
-                    st.session_state.MEMORY,
-                    selected_character
-                )
-
-                # if DEBUG:
-                #     with st.sidebar:
-                #         st.write("prompt_res")
-                #         st.json(prompt_res, expanded=False)
-
-                if prompt_res['status'] != 0:
-                    res['status'] = prompt_res['status']
-                    res['message'] = prompt_res['message']
-                    return res
-                
-                # Update the memory from prompt res
-                st.session_state.MEMORY = prompt_res['data']['messages']
-
-                # Call the OpenAI ChatGPT API
-                chatbot_response = await get_chatbot_reply_async(
-                    st.session_state.MEMORY
-                )
-
-                # if DEBUG:
-                #     with st.sidebar:
-                #         st.write("chatbot_response")
-                #         st.json({'str': chatbot_response}, expanded=False)
-
-                if "Description:" in chatbot_response:
-                    reply_text, image_prompt = chatbot_response.split("Description:")
-                else:
-                    reply_text = chatbot_response
-                    # image_prompt = f"Photorealistic image of a stylish hamster on a trip. {reply_text}"
-                    selected_character_info = INITIAL_PROMPTS.get(selected_character, "Default prompt if button name is not found")
-                    image_prompt = f"Photorealistic image of {selected_character_info}. {reply_text}"
-
-                if reply_text.startswith("אני מקשיב לך: "):
-                    reply_text = reply_text.split("Ти сьогодні дивно дивишся: ", 1)[1]
-
-                # Step 2: Generate the image using Stable Diffusion
-                api_res = stability_api.generate(
-                    prompt=image_prompt,
-                    steps=30,
-                    # width=512,
-                    # height=512,
-                    samples=1,
-                )
-
-                # if DEBUG:
-                #     with st.sidebar:
-                #         st.write("stability_api_res")
-
-                b64str = None
-                for resp in api_res:
-                    for artifact in resp.artifacts:
-                        if artifact.finish_reason == generation.FILTER:
-                            st.warning("Twoje żądanie aktywowało filtry bezpieczeństwa interfejsu API i nie mogło zostać przetworzone. Zmodyfikuj monit i spróbuj ponownie.")
-                            # st.stop()
-                        if artifact.type == generation.ARTIFACT_IMAGE:
-                            b64str = base64.b64encode(artifact.binary).decode("utf-8")
-
-                            # if DEBUG:
-                            #     with st.sidebar:
-                            #         st.json(MessageToJson(resp), expanded=False)
-
-                            break
-
-                # Render the reply as chat reply
-                message = f"{reply_text}"
-                if b64str:
-                    message += f"""<br><img src="data:image/png;base64,{b64str}" width=256 height=256 alt="AI Generated Image">"""
-                # if DEBUG:
-                #     message += f"""<br>{image_prompt}"""
-                # reply_box.markdown(get_chat_message(message), unsafe_allow_html=True)
-
-                # Clear the writing animation
-                writing_animation.empty()
-
-                # Update the chat log and the model memory
-                st.session_state.LOG.append(f"AI: {message}")
-                st.session_state.MEMORY.append({'role': "assistant", 'content': reply_text})
+                st.session_state.LOG.append(f"AI: {response}")
+                st.session_state.MEMORY.append({'role': "assistant", 'content': response})
 
         except:
             res['status'] = 2
             res['message'] = traceback.format_exc()
 
         return res
-
-    ### INITIALIZE AND LOAD ###
-
-    # # Initialize page config
-    # favicon = get_favicon(os.path.join(ROOT_DIR, "src", "assets", "AI_icon.png"))
-    # st.set_page_config(
-    #     page_title="CatGDP - Feline whiskerful conversations.",
-    #     page_icon=favicon,
-    # )
-
-    # # Get query parameters
-    # query_params = st.experimental_get_query_params()
-    # if "debug" in query_params and query_params["debug"][0].lower() == "true":
-    #     st.session_state.DEBUG = True
-
-    # if "DEBUG" in st.session_state and st.session_state.DEBUG:
-    #     DEBUG = True
 
 
     # Initialize some useful class instances
@@ -243,17 +156,38 @@ def app():
 
 
     # Define main layout
-    st.title("Analityk chomików")
-    st.write("Ja pierdolę, patrzcie co spotkałem. Bóbr, kurwa! Ja pierdolę, jakie bydlę! Bóbr! Ej, kurwa, bóbr! Bóbr, nie spierdalaj, mordo! Chodź tu, kurwa, do mnie, bóbr! Ale jesteś, kurwa, duży ty! Bóbr! Ja pierdolę, pierwszy raz w życiu widzę bobra! ")
+    st.title("Data Analytics and AI Application in Business")
+    st.write("This chatbot serves as a virtual assistant, providing insights and guidance based on the latest advancements in AI and data analytics, empowering businesses to make informed decisions and stay competitive in their industries.")
     st.subheader("")
     
-    # Создаем кнопки с персонажами
-    # selected_character = st.radio("Выберите персонажа:", list(INITIAL_PROMPTS.keys()))
 
     # # Создаем кнопки с персонажами
-    # Inside your app() function where the character selection is handled
-    selected_character = st.radio("Избери:", list(INITIAL_PROMPTS.keys()))
-    print("Selected character:", selected_character)  # Add this line for debugging
+    if 'selected_character' not in st.session_state:
+        st.session_state.selected_character = st.write("Выбери тему")
+
+    # Создание 4 столбцов
+    col1, col2, col3, col4 = st.columns(4)
+
+    # Заполнение первого столбца пустым элементом
+    with col1:
+        if st.button('Бизнес', help="Диалог о бизнесе"):
+            st.session_state.selected_character = "Бизнес"
+
+    # Создание кнопок для персонажей в оставшихся столбцах
+    with col2:
+        if st.button('Город', help="Урбанистика"):
+            st.session_state.selected_character = "Город"
+
+    with col3:
+        if st.button('Технологии', help="Диалог о технологиях"):
+            st.session_state.selected_character = "Технологии"
+
+    with col4:
+        if st.button('Помощь', help="Помогает ответить на вопросы"):
+            st.session_state.selected_character = "Помощь"
+
+
+
 
     chat_box = st.container()
     st.write("")
@@ -270,26 +204,15 @@ def app():
                     
         """, unsafe_allow_html=True)
 
-    # if DEBUG:
-    #     with st.sidebar:
-    #         st.subheader("Debug area")
-
-
     # Load CSS code
     st.markdown(get_css(), unsafe_allow_html=True)
 
 
-    # # # Создаем кнопки с персонажами
-    # # Inside your app() function where the character selection is handled
-    # selected_character = st.radio("Выберите персонажа:", list(INITIAL_PROMPTS.keys()))
-    # print("Selected character:", selected_character)  # Add this line for debugging
-
-
     # Обновляем выбранный персонаж в состоянии сеанса
-    st.session_state.selected_character = selected_character
+    # st.session_state.selected_character = selected_character
 
     # Получаем начальное приветственное сообщение для выбранного персонажа
-    initial_prompt = INITIAL_PROMPTS.get(selected_character, "Default initial prompt")
+    initial_prompt = INITIAL_PROMPTS.get(st.session_state.selected_character, "Default initial prompt")
 
     # Initialize/maintain a chat log and chat memory in Streamlit's session state
     # Log is the actual line by line chat, while memory is limited by model's maximum token context length
@@ -320,7 +243,7 @@ def app():
 
     # Gate the subsequent chatbot response to only when the user has entered a prompt
     if len(human_prompt) > 0:
-        run_res = asyncio.run(main(human_prompt, selected_character))  # Передаем выбранного персонажа в функцию main
+        run_res = asyncio.run(main(human_prompt, st.session_state.selected_character))  # Передаем выбранного персонажа в функцию main
         # if run_res['status'] == 0 and not DEBUG:
         if run_res['status'] == 0:
             st.rerun()
